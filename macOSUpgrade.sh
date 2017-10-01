@@ -40,14 +40,13 @@
 #           - Latest Version of the macOS Installer (must be 10.12.4 or later)
 #           - Look over the USER VARIABLES and configure as needed.
 #
-#
 # For more information, visit https://github.com/kc9wwh/macOSUpgrade
 #
 #
 # Written by: Joshua Roskos | Professional Services Engineer | Jamf
-#
+# Modified by: Richard Purves - Apple Consultant
 # Created On: January 5th, 2017
-# Updated On: September 8th, 2017
+# Updated On: September 29th, 2017
 #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
@@ -59,7 +58,7 @@
 userDialog=0
 
 ##Title to be used for userDialog (only applies to Utility Window)
-title="macOS Sierra Upgrade"
+title="macOS High Sierra Upgrade"
 
 ##Heading to be used for userDialog
 heading="Please wait as we prepare your computer for macOS Sierra..."
@@ -78,13 +77,16 @@ version="$5"
 download_trigger="$6"
 
 ##Title to be used for userDialog
-description="
-This process will take approximately 5-10 minutes.
+description="This process will take a few minutes.
 Once completed your computer will reboot and begin the upgrade."
 
 #Description to be used prior to downloading Sierra
-dldescription="We need to download macOS Sierra to your computer, this will \
+dldescription="We need to download macOS High Sierra to your computer, this will \
 take several minutes."
+
+#Warning if the download fails
+dlfailed="The download of the macOS High Sierra update failed. Please contact \
+your IT administrator."
 
 ##Icon to be used for userDialog
 ##Default is macOS Sierra Installer logo which is included in the staged installer package
@@ -137,13 +139,28 @@ else
   downloadSierra="Yes"
 fi
 
-##Download Sierra if needed
+##Caffeinate
+/usr/bin/caffeinate -dis & 
+
+##Download Sierra if needed. Check for policy successfully completed.
 if [ $downloadSierra = "Yes" ]; then
   /Library/Application\ Support/JAMF/bin/jamfHelper.app/Contents/MacOS/jamfHelper \
-      -windowType utility -title "$title"  -alignHeading center -alignDescription left -description "$dldescription" \
-      -button1 Ok -defaultButton 1 -icon "/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/SidebarDownloadsFolder.icns" -iconSize 100
+  -windowType utility -title "$title"  -alignHeading center -alignDescription left -description "$dldescription" \
+  -icon "/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/SidebarDownloadsFolder.icns" &
+  
   ##Run policy to cache installer
-  /usr/local/jamf/bin/jamf policy -event $download_trigger
+  policycheck=$( /usr/local/jamf/bin/jamf policy -event $download_trigger | grep "Successfully" | wc -l | awk '{ print $1 }' )
+  
+  if [ $policycheck != "1" ];
+  then
+    killall jamfHelper
+  	killall caffeinate
+    /Library/Application\ Support/JAMF/bin/jamfHelper.app/Contents/MacOS/jamfHelper \
+    -windowType utility -title "$title"  -alignHeading center -alignDescription left -description "$dlfailed" \
+    -button1 Ok -defaultButton 1 -icon "/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/SidebarDownloadsFolder.icns"
+    exit 1	
+  fi
+
 else
   /bin/echo "macOS Sierra installer with $version was already present, continuing..."
 fi
@@ -201,27 +218,25 @@ EOF
 # APPLICATION
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
-##Caffeinate
-/usr/bin/caffeinate -dis & 
-caffeinatePID=$(echo $!)
+killall jamfHelper
+sleep 5
 
 if [[ ${pwrStatus} == "OK" ]] && [[ ${spaceStatus} == "OK" ]]; then
     ##Launch jamfHelper
     if [[ ${userDialog} == 0 ]]; then
         /bin/echo "Launching jamfHelper as FullScreen..."
         /Library/Application\ Support/JAMF/bin/jamfHelper.app/Contents/MacOS/jamfHelper -windowType fs -title "" -icon "$icon" -heading "$heading" -description "$description" &
-        jamfHelperPID=$(echo $!)
+        /bin/sleep 5
     fi
     if [[ ${userDialog} == 1 ]]; then
         /bin/echo "Launching jamfHelper as Utility Window..."
-        /Library/Application\ Support/JAMF/bin/jamfHelper.app/Contents/MacOS/jamfHelper -windowType utility -title "$title" -icon "$icon" -heading "$heading" -description "$description" -iconSize 100 &
-        jamfHelperPID=$(echo $!)
+        /Library/Application\ Support/JAMF/bin/jamfHelper.app/Contents/MacOS/jamfHelper -windowType utility -title "$title" -icon "$icon" -heading "$heading" -description "$description" &
+        /bin/sleep 5
     fi
 
     ##Begin Upgrade
     /bin/echo "Launching startosinstall..."
     "$OSInstaller/Contents/Resources/startosinstall" --applicationpath "$OSInstaller" --nointeraction --pidtosignal $jamfHelperPID &
-    /bin/sleep 3
 else
     ## Remove Script
     /bin/rm -f /usr/local/jamfps/finishOSInstall.sh
@@ -230,11 +245,12 @@ else
     /bin/echo "Launching jamfHelper Dialog (Requirements Not Met)..."
     /Library/Application\ Support/JAMF/bin/jamfHelper.app/Contents/MacOS/jamfHelper -windowType utility -title "$title" -icon "$icon" -heading "Requirements Not Met" -description "We were unable to prepare your computer for macOS Sierra. Please ensure you are connected to power and that you have at least 15GB of Free Space.
     
-    If you continue to experience this issue, please contact the IT Support Center." -iconSize 100 -button1 "OK" -defaultButton 1
+    If you continue to experience this issue, please contact the IT Support Center." -button1 "OK" -defaultButton 1
 
 fi
 
-##Kill Caffeinate
-kill ${caffeinatePID}
+##Kill any caffeinate or jamfHelper processes
+killall jamfHelper
+killall caffeinate
 
 exit 0
